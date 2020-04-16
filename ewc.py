@@ -6,6 +6,8 @@ from torchvision import transforms
 from datasets.mnist_sequential import SequentialMNIST
 import numpy as np
 
+task_il = True
+
 batch_size, d_in, d_hidden, d_out = 64, 28*28, 100, 10
 lr, momentum = 0.1, 0.1
 lambda_reg = 500000
@@ -100,7 +102,6 @@ model.to(device)
 model.cuda()
 optimizer = optim.SGD(model.parameters(), lr, momentum)
 
-task_il = True
 
 
 def get_mask(input, target, device, n_nabels):
