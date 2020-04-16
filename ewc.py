@@ -9,8 +9,8 @@ import numpy as np
 task_il = True
 
 batch_size, d_in, d_hidden, d_out = 64, 28*28, 100, 10
-lr, momentum = 0.1, 0.1
-lambda_reg = 500000
+lr, momentum = 0.1, 0
+lambda_reg = 1000000
 epochs = 1
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -60,10 +60,6 @@ class Net(nn.Module):
                 tot += torch.sum(torch.sum(fisher[name] *
                                            ((param-self.prev_parameters[name])**2)))
         return tot/2.
-
-    def _swap_params(self, new_params):
-        for name, param in self.named_parameters():
-            param = new_params[name]
 
     def estimate_fisher(self, train_loader: torch.utils.data.DataLoader):
         # train_loader.batch_size=1
