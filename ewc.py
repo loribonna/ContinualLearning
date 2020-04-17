@@ -10,12 +10,11 @@ task_il = True
 
 batch_size, d_in, d_hidden, d_out = 64, 28*28, 100, 10
 lr, momentum = 0.1, 0
-lambda_reg = 1000000
-epochs = 1
+lambda_reg = 10000
+epochs = 3
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 torch.backends.cudnn.benchmark = True
-
 
 class Net(nn.Module):
     def __init__(self, device, loss_fn):
@@ -28,11 +27,8 @@ class Net(nn.Module):
 
         self.to(device)
 
-        self._get_c_params()
         self.fisher = np.array([])
-
-        self.tmp_fisher = self._init_fisher()
-        self.fisher = np.append(self.fisher, self._init_fisher())
+        self.prev_parameters = np.array([])
 
     def forward(self, x):
         x = x.view(-1, d_in)  # flatten out
@@ -40,51 +36,55 @@ class Net(nn.Module):
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
         x = self.fc3(x)
-        return F.log_softmax(x, dim=-1)
+        return F.log_softmax(x, dim=1)
 
     def _init_fisher(self):
         tmp_fisher = {}
         for name, param in self.named_parameters():
-            tmp_fisher[name] = torch.zeros_like(param, device=device)
+            tmp_fisher[name] = torch.zeros_like(param.detach(), device=device)
         return tmp_fisher
 
-    def _get_c_params(self):
-        self.prev_parameters = {}
+    def _init_prev_params(self):
+        prev_parameters = {}
         for name, param in self.named_parameters():
-            self.prev_parameters[name] = torch.tensor(param, device=self.device)
+            prev_parameters[name] = torch.tensor(
+                param.detach(), device=self.device)
+        return prev_parameters
 
     def get_regularizer(self):
         tot = 0
-        for name, param in self.named_parameters():
-            for fisher in self.fisher:
-                tot += torch.sum(torch.sum(fisher[name] *
-                                           ((param-self.prev_parameters[name])**2)))
+        for i in range(len(self.fisher)):
+            for name, param in self.named_parameters():
+                tot += torch.sum(torch.sum(self.fisher[i][name] *
+                                           ((param-self.prev_parameters[i][name])**2)))
         return tot/2.
 
     def estimate_fisher(self, train_loader: torch.utils.data.DataLoader):
-        # train_loader.batch_size=1
         self.eval()
-        n_train = len(train_loader)*(train_loader.batch_size-1)
+        n_train=0
         tmp_fisher = self._init_fisher()
 
         for inputs, targets in train_loader:
-            inputs=inputs.to(self.device)
-
+            inputs = inputs.to(self.device)
+            n_train+=inputs.shape[0]
             self.zero_grad()
 
             outputs = self.forward(inputs)
 
-            loss = F.nll_loss(F.log_softmax(outputs,dim=-1), torch.max(outputs, axis=1)[1])
+            loss = F.nll_loss(F.log_softmax(outputs, dim=1),
+                              torch.max(outputs, axis=1)[1])
             loss.backward()
 
             for name, param in self.named_parameters():
-                tmp_fisher[name] += torch.sum(param.grad.detach()**2)
+                tmp_fisher[name] += param.grad.detach()**2
 
+        tmp_params = {}
         for n, p in self.named_parameters():
-            self.prev_parameters[n]=p.clone().to(self.device)
+            tmp_params[n] = torch.tensor(p.detach(), device=self.device)
             tmp_fisher[n] = tmp_fisher[n]/n_train
 
         self.fisher = np.append(self.fisher, tmp_fisher)
+        self.prev_parameters = np.append(self.prev_parameters, tmp_params)
 
 
 dataset = SequentialMNIST(MNIST, batch_size=batch_size, transforms=[
@@ -97,7 +97,6 @@ model = Net(device, F.nll_loss)
 model.to(device)
 model.cuda()
 optimizer = optim.SGD(model.parameters(), lr, momentum)
-
 
 
 def get_mask(input, target, device, n_nabels):
@@ -134,9 +133,10 @@ def train(epochs: int, model, n_nabels, loader: torch.utils.data.DataLoader, opt
             if task_il:
                 outputs = outputs+mask
 
-            outputs = F.log_softmax(outputs,dim=-1)
+            outputs = F.log_softmax(outputs, dim=1)
 
-            loss = F.nll_loss(outputs, target) + lambda_reg*model.get_regularizer()
+            loss = F.nll_loss(outputs, target) + \
+                lambda_reg * model.get_regularizer()
 
             loss.backward()
             optimizer.step()
@@ -169,7 +169,7 @@ def test(model, n_nabels, loader: torch.utils.data.DataLoader, printer=True):
             if task_il:
                 output = output+mask
 
-            output = F.log_softmax(output,dim=-1)
+            output = F.log_softmax(output, dim=1)
 
             test_loss += F.nll_loss(output, target, size_average=False).item()
             pred = output.data.max(1, keepdim=True)[1]
@@ -187,10 +187,11 @@ def test(model, n_nabels, loader: torch.utils.data.DataLoader, printer=True):
 for task in range(dataset.n_tasks):
     print("-- TASK %d" % task)
 
-    train_loader = dataset.train_data(task)
+    #train_loader = dataset.train_data(task)
 
-    train(epochs, model, 10, train_loader, optimizer)
+    train(epochs, model, 10, dataset.train_data(task), optimizer)
     test(model, 10, dataset.test_data(task))
-    model.estimate_fisher(train_loader)
+    print("\t-- Estimate fisher")
+    model.estimate_fisher(dataset.train_data(task))
 
 test_loss, accuracy = test(model, 10, dataset.test_data())

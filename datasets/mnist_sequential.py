@@ -40,9 +40,10 @@ class SequentialMNIST:  # each task with 2 classes
     def _get_classes(self, task: int):
         return task*2, task*2+1
 
-    def train_data(self, task: int = None,loader=True) -> DataLoader:
+    def train_data(self, task: int = None,loader=True, batch_size=None) -> DataLoader:
+        batch_size=self.batch_size if batch_size==None else batch_size
         if(task == None):
-            return DataLoader(self.train, batch_size=self.batch_size, shuffle=True)
+            return DataLoader(self.train, batch_size=batch_size, shuffle=True)
 
         cl_a, cl_b = self._get_classes(task)
 
@@ -55,7 +56,7 @@ class SequentialMNIST:  # each task with 2 classes
 
             subset = torch.utils.data.Subset(self.train, indexes)
 
-            return DataLoader(subset, batch_size=self.batch_size, shuffle=True)
+            return DataLoader(subset, batch_size=batch_size, shuffle=True)
         else:
             return self.train.data[mask]
 

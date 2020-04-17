@@ -1,7 +1,7 @@
 # SGD
 
-TaskIL: `python mnist_sgd_taskil.py` -> 91%
-ClassIL: `python mnist_sgd_classil.py` -> 19%
+- TaskIL: `python mnist_sgd_taskil.py` -> 91%
+- ClassIL: `python mnist_sgd_classil.py` -> 19%
 
 # EWC
 
