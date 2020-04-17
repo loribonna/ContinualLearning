@@ -5,6 +5,7 @@ import torch.nn.functional as F
 from torchvision import transforms
 from datasets.mnist_sequential import SequentialMNIST
 import numpy as np
+from task_il_utils import get_mask
 
 task_il = True
 
@@ -97,22 +98,6 @@ model = Net(device, F.nll_loss)
 model.to(device)
 model.cuda()
 optimizer = optim.SGD(model.parameters(), lr, momentum)
-
-
-def get_mask(input, target, device, n_nabels):
-    tasks = (target/2).type(torch.IntTensor).unsqueeze(-1).expand(-1,
-                                                                  n_nabels).to(device)
-    tasks_base = (torch.arange(0, n_nabels) /
-                  2).expand(input.shape[0], -1).type(torch.IntTensor).to(device)
-
-    mask = torch.empty((input.shape[0], n_nabels),
-                       dtype=torch.float32).to(device)
-
-    mask[tasks != tasks_base] = -float("Inf")
-    mask[tasks == tasks_base] = 0
-
-    return mask
-
 
 def train(epochs: int, model, n_nabels, loader: torch.utils.data.DataLoader, optimizer, print_delay=5000, printer=True):
     loader.pin_memory = True
