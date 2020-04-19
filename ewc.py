@@ -3,16 +3,18 @@ from torch import nn, optim
 from torchvision.datasets import MNIST
 import torch.nn.functional as F
 from torchvision import transforms
-from datasets.mnist_sequential import SequentialMNIST
+from datasets.sequentializer import Sequentializer
 import numpy as np
 from task_il_utils import get_mask
+from settings import Mode
 
-task_il = True
+mode = Mode.domain_il
 
-batch_size, d_in, d_hidden, d_out = 64, 28*28, 100, 10
+batch_size, d_in, d_hidden, d_out = 128, 28*28, 100, 10
 lr, momentum = 0.1, 0
-lambda_reg = 10000
-epochs = 3
+lambda_reg = 50000
+epochs = 1
+n_tasks_domain_il=20
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 torch.backends.cudnn.benchmark = True
@@ -88,12 +90,6 @@ class Net(nn.Module):
         self.prev_parameters = np.append(self.prev_parameters, tmp_params)
 
 
-dataset = SequentialMNIST(MNIST, batch_size=batch_size, transforms=[
-    transforms.ToTensor(),
-    #transforms.Normalize((0.1307,), (0.3081,))
-])
-
-
 model = Net(device, F.nll_loss)
 model.to(device)
 model.cuda()
@@ -108,14 +104,14 @@ def train(epochs: int, model, n_nabels, loader: torch.utils.data.DataLoader, opt
         for i, data in enumerate(loader):
             inputs, target = data[0].to(device), data[1].to(device)
 
-            if task_il:
+            if mode == Mode.task_il:
                 mask = get_mask(inputs, target, device, n_nabels)
 
             optimizer.zero_grad()
 
             outputs = model(inputs)
 
-            if task_il:
+            if mode == Mode.task_il:
                 outputs = outputs+mask
 
             outputs = F.log_softmax(outputs, dim=1)
@@ -146,12 +142,12 @@ def test(model, n_nabels, loader: torch.utils.data.DataLoader, printer=True):
             data = d.to(device)
             target = t.to(device)
 
-            if task_il:
+            if mode == Mode.task_il:
                 mask = get_mask(data, target, device, n_nabels)
 
             output = model(data)
 
-            if task_il:
+            if mode == Mode.task_il:
                 output = output+mask
 
             output = F.log_softmax(output, dim=1)
@@ -169,11 +165,19 @@ def test(model, n_nabels, loader: torch.utils.data.DataLoader, printer=True):
     return test_loss, accuracy
 
 
+if (mode==Mode.task_il or mode==Mode.class_il):
+    dataset = Sequentializer(MNIST, batch_size=batch_size, transforms=[
+        transforms.ToTensor(),
+        #transforms.Normalize((0.1307,), (0.3081,))
+    ])
+else:
+    from datasets.permuter import Permuter
+    
+    dataset = Permuter(MNIST,n_tasks_domain_il, batch_size)
+
+
 for task in range(dataset.n_tasks):
     print("-- TASK %d" % task)
-
-    #train_loader = dataset.train_data(task)
-
     train(epochs, model, 10, dataset.train_data(task), optimizer)
     test(model, 10, dataset.test_data(task))
     print("\t-- Estimate fisher")

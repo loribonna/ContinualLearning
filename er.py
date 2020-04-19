@@ -3,22 +3,22 @@ from torch import nn, optim
 from torchvision.datasets import MNIST
 import torch.nn.functional as F
 from torchvision import transforms
-from datasets.mnist_sequential import SequentialMNIST
 from task_il_utils import get_mask
 import numpy as np
+from settings import Mode
 
-batch_size, d_in, d_hidden, d_out = 32, 28*28, 100, 10
+batch_size, d_in, d_hidden, d_out = 128, 28*28, 100, 10
 lr, momentum = 0.1, 0
-lambda_reg = 2.8 
+lambda_reg = 2.8
 buff_size = 5120
-n_buf_samples = 32
+n_buf_samples = 128
 epochs = 1
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+n_tasks_domain_il = 20
 
 torch.backends.cudnn.benchmark = True
 
-task_il = False
-
+mode = Mode.domain_il
 
 class Net(nn.Module):
     def __init__(self, device, buff_size=10, reservoir=True):
@@ -72,20 +72,17 @@ class Net(nn.Module):
 
         max_elements = np.min((self.buffer_size, self.n_seen_elements))
         # max_elements = torch.min(torch.tensor((self.buffer_size, self.n_seen_elements)))
-        n_elements = max_elements if n_elements == None else np.min((n_elements, max_elements))
+        n_elements = max_elements if n_elements == None else np.min(
+            (n_elements, max_elements))
 
-        indexes = np.random.choice(max_elements, size=n_elements, replace=False)
+        indexes = np.random.choice(
+            max_elements, size=n_elements, replace=False)
 
         return self.buffer_data[indexes], self.buffer_targets[indexes]
 
     def _push_herding(self):
         raise "Heriding Not Implemented"
 
-
-dataset = SequentialMNIST(MNIST, batch_size=batch_size, transforms=[
-    transforms.ToTensor(),
-    #transforms.Normalize((0.1307,), (0.3081,))
-])
 
 
 model = Net(device, buff_size)
@@ -108,7 +105,7 @@ def train(epochs: int, model, n_nabels, loader: torch.utils.data.DataLoader, opt
             # extended_inputs = torch.cat((inputs, buf_inputs))
             # extended_targets = torch.cat((targets, buf_targets))
 
-            if task_il:
+            if mode == Mode.task_il:
                 mask = get_mask(inputs, targets, device, n_nabels)
                 mask_buf = get_mask(
                     buf_inputs, buf_targets, device, n_nabels) if buf_inputs != None else None
@@ -118,15 +115,17 @@ def train(epochs: int, model, n_nabels, loader: torch.utils.data.DataLoader, opt
             outputs = model(inputs)
             outputs_buff = model(buf_inputs) if buf_inputs != None else None
 
-            if task_il:
+            if mode == Mode.task_il:
                 outputs = outputs+mask
                 outputs_buff = outputs_buff+mask_buf if buf_inputs != None else None
 
             outputs = F.log_softmax(outputs, dim=1)
-            outputs_buff = F.log_softmax(outputs_buff, dim=1) if buf_inputs != None else None
+            outputs_buff = F.log_softmax(
+                outputs_buff, dim=1) if buf_inputs != None else None
 
             loss = F.nll_loss(outputs, targets)
-            loss_buf = F.nll_loss(outputs_buff, buf_targets) if buf_inputs != None else 0
+            loss_buf = F.nll_loss(
+                outputs_buff, buf_targets) if buf_inputs != None else 0
 
             loss = loss + lambda_reg*loss_buf
 
@@ -155,12 +154,12 @@ def test(model, n_nabels, loader: torch.utils.data.DataLoader, printer=True):
             data = d.to(device)
             target = t.to(device)
 
-            if task_il:
+            if mode == Mode.task_il:
                 mask = get_mask(data, target, device, n_nabels)
 
             output = model(data)
 
-            if task_il:
+            if mode == Mode.task_il:
                 output = output+mask
 
             output = F.log_softmax(output, dim=1)
@@ -178,9 +177,23 @@ def test(model, n_nabels, loader: torch.utils.data.DataLoader, printer=True):
     return test_loss, accuracy
 
 
+if (mode == Mode.task_il or mode == Mode.class_il):
+    from datasets.sequentializer import Sequentializer
+
+    dataset = Sequentializer(MNIST, batch_size=batch_size, transforms=[
+        transforms.ToTensor(),
+        #transforms.Normalize((0.1307,), (0.3081,))
+    ])
+
+else:
+    from datasets.permuter import Permuter
+
+    dataset = Permuter(MNIST, n_tasks_domain_il, batch_size)
+
+
 for task in range(dataset.n_tasks):
     print("-- TASK %d" % task)
     train(epochs, model, 10, dataset.train_data(
         task), optimizer)
     test(model, 10, dataset.test_data(task))
-test(model,10, dataset.test_data())
+test(model, 10, dataset.test_data())
